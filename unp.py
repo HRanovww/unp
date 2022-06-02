@@ -19,13 +19,17 @@ def register_unpacker(cls):
 
 
 def fnmatch(pattern, filename):
+    # Pattern is like '*.tar'
+    # use regex to match the filename.
     filename = os.path.basename(os.path.normcase(filename))
     pattern = os.path.normcase(pattern)
     bits = '(%s)' % re.escape(pattern).replace('\\*', ')(.*?)(')
+    # Why there is an empty group in the bits (pattern)?
     return re.match('^%s$' % bits, filename)
 
 
 def which(name):
+    # find the binary [name] under PATH.
     path = os.environ.get('PATH')
     if path:
         for p in path.split(os.pathsep):
@@ -42,13 +46,18 @@ def increment_string(string):
 
 
 def get_mimetype(filename):
+    # Note that [filename] is the full path.
     file_executable = which('file')
     if file_executable is not None:
         rv = subprocess.Popen(['file', '-b', '--mime-type', filename],
                               stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE).communicate()[0].strip()
         if rv:
+            # rv is the return value of 'file -b --mime-type', 
+            # i.e., the mime-type returned by file.
             return rv
+    # if there is no 'file' or cannot get rv from file,
+    # use python's built-in package [mimetypes]
     return mimetypes.guess_type(filename)[0]
 
 
@@ -61,11 +70,13 @@ class StreamProcessor(object):
     def __init__(self, format, stream):
         self.regex = re.compile(format)
         self.stream = stream
+        # print("Processor Init")
+        # print("format: {0}, stream: {1}".format(format, stream))
 
     def process(self, p):
         stream = getattr(p, self.stream)
         while 1:
-            line = stream.readline()
+            line = stream.readline().decode('utf-8')
             if not line:
                 break
             match = self.regex.search(line)
@@ -123,6 +134,7 @@ class UnpackerBase(object):
             self.executable,
         )]
         if sys.platform == 'darwin' and self.brew_package is not None:
+            # If running on macOS. (darwin)
             msgs.extend((
                 'You can install the unpacker using brew:',
                 '',
@@ -145,6 +157,8 @@ class UnpackerBase(object):
         cwd = convert_arg(self.cwd)
         if cwd is None:
             cwd = '.'
+        # print("args:", args)
+        # print("cwd:", cwd, "????")
         return args, cwd
 
     def report_file(self, filename):
@@ -160,6 +174,11 @@ class UnpackerBase(object):
         fallback_dst = os.path.join(os.path.abspath(dst), basename)
         while os.path.isdir(fallback_dst):
             fallback_dst = increment_string(fallback_dst)
+
+        while os.path.exists(fallback_dst):
+            fallback_dst = increment_string(fallback_dst)
+        else:
+            click.secho('The result folder is renamed, as there exists file(s) with same name.', fg='yellow')
 
         # Find how many unpacked files there are.  If there is more than
         # one, then we have to go to the fallback destination.  Same goes
@@ -222,6 +241,7 @@ class UnpackerBase(object):
         args, cwd = self.get_args_and_cwd(dst)
         for idx, arg in enumerate(args):
             if arg.split() != [arg]:
+                # deal with filenames that have SPACE?
                 args[idx] = '"%s"' % \
                     arg.replace('\\', '\\\\').replace('"', '\\"')
         click.echo(' '.join(args))
@@ -473,8 +493,13 @@ if sys.platform == 'darwin':
 
 def get_unpacker_class(filename):
     uifn = click.format_filename(filename)
+    # print("filename: ", filename)
+    # print("uifn: ", uifn)
 
     for unpacker_cls in unpackers:
+        # unpackers here is the global variable.
+        # the decorator @register_unpacker, everytime it shows up,
+        # the global unpackers = [] will append that unpacker class.
         if unpacker_cls.filename_matches(filename):
             return unpacker_cls
 
@@ -502,6 +527,9 @@ def list_unpackers(ctx, param, value):
 
 
 def select_unpacker(ctx, param, value):
+    # print("Run select_unpacker")
+    # print("Param:", param)
+    # print("Value:", value)
     if value is None:
         return value
     for unpacker in unpackers:
@@ -517,6 +545,8 @@ def select_unpacker(ctx, param, value):
 @click.option('-o', '--output', type=click.Path(),
               help='Defines the output folder.  '
               'Defaults to the working directory.')
+# Z: Why not set the default value of output here?
+# I can't tell any difference.
 @click.option('--unpacker', 'forced_unpacker', callback=select_unpacker,
               metavar='UNPACKER',
               help='Overrides the automatically detected unpacker.  For '
@@ -545,6 +575,7 @@ def cli(files, silent, output, dump_command, forced_unpacker):
     if output is None:
         output = '.'
 
+    # contains instances (unpacker_cls instantiated with the target file.)
     unpackers = []
 
     for filename in files:
@@ -553,9 +584,14 @@ def cli(files, silent, output, dump_command, forced_unpacker):
             raise click.UsageError('Could not find file "%s".' %
                                    click.format_filename(filename))
         if forced_unpacker is not None:
+            # if this option is set, the method 'select_unpacker' will be called
+            # and a class will be returned.
             unpacker_cls = forced_unpacker
         else:
+            # print("Unforced")
             unpacker_cls = get_unpacker_class(filename)
+
+        # unpacker_cls is a class, we instantiate it with the compressed file.
         unpackers.append(unpacker_cls(filename, silent=silent))
 
     for unpacker in unpackers:
